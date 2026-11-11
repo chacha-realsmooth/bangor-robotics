@@ -1,1 +1,19 @@
-// this is a css file for the app
+/* alt + shift + f to format */
+
+
+/* ---------- Global Variables ---------- */
+:root {
+    --violet-twilight: #454adeff;
+    --space-indigo: #1b1f3bff;
+    --hyper-magenta: #b14aedff;
+    --orchid-mist: #c874d9ff;
+    --pastel-petal: #e1bbc9ff;
+}
+
+.kaisei-opti-regular {
+  font-family: "Kaisei Opti", serif;
+  font-weight: 400;
+  font-style: normal;
+}
+
+/* ---------- Landing Page ---------- */
