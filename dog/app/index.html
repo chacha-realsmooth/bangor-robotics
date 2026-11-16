@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robo-Dog App</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://huggingface.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+</head>
+<body>
+
+<div>
+  <button id="load">Load models</button>
+  <button id="listen" disabled>Start listening</button>
+  <p>Status: <span id="status"></span> <strong id="error"></strong></p>
+  <p id="timings"></p>
+  <details name="input" open>
+    <summary>Voice</summary>
+    <p>Speech activity <progress id="level" max="1" value="0"></progress></p>
+    <p>Recognised speech: <span id="transcript"></span></p>
+  </details>
+  <details name="input">
+    <summary>Manual command</summary>
+    <form id="manual">
+      <input id="manual-text" placeholder="e.g. forward two steps" autocomplete="off">
+      <button id="interpret" disabled>Interpret</button>
+    </form>
+  </details>
+</div>
+
+<div style="display: flex; gap: 2em">
+  <div style="flex: 1">
+    <h3>Command options</h3>
+    <form id="options"></form>
+    <p id="reasoning"></p>
+  </div>
+  <div style="flex: 1">
+    <h3>Selected command parameters</h3>
+    <form id="params"></form>
+    <p id="validation"></p>
+    <button id="send" disabled>Send command</button>
+  </div>
+</div>
+
+<script type="module">
+// Connection between the HTML page and the VoiceInstruct pipeline
+import { TOOLS } from "/src/tools.ts";
+import { VoiceInstruct } from "/src/voice-instruct.ts";
+function byId(id) {
+    return document.getElementById(id);
+}
+const loadButton = byId("load");
+const listenButton = byId("listen");
+const interpretButton = byId("interpret");
+const sendButton = byId("send");
+const manualForm = byId("manual");
+const manualText = byId("manual-text");
+const levelBar = byId("level");
+const optionsForm = byId("options");
+const paramsForm = byId("params");
+// e.g. "forward / backward" or "0.1 to 3 seconds"
+function describe(param) {
+    if (param.type === "enum") {
+        return Object.keys(param.values).join(" / ");
+    }
+    const unit = param.units[0] ?? "";
+    return `${param.min} to ${param.max} ${unit}`.trim();
+}
+function paragraph(...content) {
+    const p = document.createElement("p");
+    p.append(...content);
+    return p;
+}
+// ---------- Command options ----------
+function optionNotes(state, command) {
+    const option = state.options.find(o => o.command === command);
+    if (!option)
+        return "";
+    const notes = [];
+    if (option.source === "parser") {
+        notes.push("exact match");
+    }
+    else if (option.source === "needle") {
+        if (option.confidence === null) {
+            notes.push("Needle's choice");
+        }
+        else {
+            notes.push(`Needle's choice, confidence ${Math.round(option.confidence * 100)}%`);
+        }
+    }
+    else if (option.source === "suppressed") {
+        notes.push("withheld by Needle");
+    }
+    if (option.similarity !== null) {
+        notes.push("similarity " + option.similarity.toFixed(2));
+    }
+    if (notes.length === 0)
+        return "";
+    return ` (${notes.join(", ")})`;
+}
+function renderOptions(state) {
+    optionsForm.replaceChildren();
+    for (const [command, spec] of Object.entries(TOOLS)) {
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "command";
+        radio.value = command;
+        const label = document.createElement("label");
+        label.append(radio, ` ${command}: ${spec.description}`, optionNotes(state, command));
+        optionsForm.append(paragraph(label));
+    }
+}
+// ---------- Selected command parameters ----------
+function paramInput(param, value) {
+    if (param.type === "enum") {
+        const select = document.createElement("select");
+        select.append(new Option("", ""));
+        for (const choice of Object.keys(param.values)) {
+            select.append(new Option(choice, choice));
+        }
+        select.value = typeof value === "string" ? value : "";
+        return select;
+    }
+    const input = document.createElement("input");
+    input.type = "number";
+    input.step = "any";
+    input.min = String(param.min);
+    input.max = String(param.max);
+    input.value = value === undefined ? "" : String(value);
+    return input;
+}
+function renderParams(state) {
+    paramsForm.replaceChildren();
+    if (!state.draft)
+        return;
+    const params = Object.entries(TOOLS[state.draft.command].params);
+    if (params.length === 0) {
+        paramsForm.append("This command has no parameters.");
+        return;
+    }
+    for (const [name, param] of params) {
+        const input = paramInput(param, state.draft.args[name]);
+        input.name = name;
+        const label = document.createElement("label");
+        label.append(`${name} (${describe(param)}) `, input);
+        paramsForm.append(paragraph(label));
+    }
+}
+function validationMessage(state) {
+    if (!state.draft)
+        return "Select a command option.";
+    if (state.command)
+        return "Ready to send.";
+    const needs = [];
+    for (const [name, param] of Object.entries(TOOLS[state.draft.command].params)) {
+        needs.push(`${name}: ${describe(param)}`);
+    }
+    return "Cannot send yet. Needs " + needs.join("; ") + ".";
+}
+// ---------- Rendering ----------
+let drawnRevision = -1;
+let drawnDraft;
+function render(state) {
+    byId("status").textContent = state.status;
+    byId("error").textContent = state.error;
+    byId("timings").textContent = state.timings;
+    byId("transcript").textContent = state.transcript;
+    byId("reasoning").textContent = state.reasoning;
+    byId("validation").textContent = validationMessage(state);
+    loadButton.disabled = state.busy || state.ready;
+    listenButton.disabled = !state.ready;
+    listenButton.textContent = state.listening ? "Stop listening" : "Start listening";
+    interpretButton.disabled = !state.ready || state.busy;
+    sendButton.disabled = state.busy || !state.command;
+    if (state.revision !== drawnRevision) {
+        drawnRevision = state.revision;
+        drawnDraft = undefined;
+        renderOptions(state);
+    }
+    const draftKey = state.draft ? state.revision + ":" + state.draft.command : null;
+    if (draftKey !== drawnDraft) {
+        drawnDraft = draftKey;
+        renderParams(state);
+    }
+    for (const radio of optionsForm.querySelectorAll("input")) {
+        radio.checked = radio.value === state.selected;
+        radio.disabled = state.busy || state.options.length === 0;
+    }
+    for (const field of paramsForm.querySelectorAll("input, select")) {
+        field.disabled = state.busy;
+    }
+}
+// ---------- Wiring ----------
+const pipeline = new VoiceInstruct();
+pipeline.onChange(render);
+pipeline.onLevel(probability => {
+    levelBar.value = probability;
+});
+render(pipeline.state);
+void pipeline.load(); // loads straight away, load button is only there to retry
+loadButton.onclick = () => void pipeline.load();
+listenButton.onclick = () => void pipeline.toggleListening();
+sendButton.onclick = () => void pipeline.send();
+manualForm.onsubmit = event => {
+    event.preventDefault();
+    void pipeline.interpret(manualText.value);
+};
+optionsForm.onchange = event => {
+    const radio = event.target;
+    pipeline.select(radio.value);
+};
+paramsForm.oninput = event => {
+    const field = event.target;
+    if (field instanceof HTMLInputElement && field.type === "number") {
+        pipeline.setArg(field.name, field.value === "" ? null : field.valueAsNumber);
+    }
+    else {
+        pipeline.setArg(field.name, field.value);
+    }
+};
+paramsForm.onsubmit = event => event.preventDefault();
+addEventListener("pagehide", () => void pipeline.dispose());
+</script>
+
+</body>
+</html>

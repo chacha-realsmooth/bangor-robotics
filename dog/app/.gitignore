@@ -1,0 +1,11 @@
+# Installed packages (cactus-needle, vad-web, onnxruntime-web, vite)
+node_modules/
+
+# Vite build output: copies of the cactus worker and needle.wasm, plus the VAD
+# model and ONNX runtime, all regenerated from node_modules by `npm run build`
+dist/
+.vite/
+
+# Needle/Whistle weights. The browser downloads and caches these itself, so
+# local copies (e.g. from downloadModel) never need committing.
+*.cact
