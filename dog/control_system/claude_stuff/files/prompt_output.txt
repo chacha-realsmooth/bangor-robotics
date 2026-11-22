@@ -1,0 +1,38 @@
+
+I’ve built the simulation as a MuJoCo and PPO setup. I couldn’t run it here because MuJoCo isn’t installed in my sandbox and there’s no network access. Run python train.py check first to catch any problems.
+
+The robot
+
+It has a solid 5 kg trunk and four legs with 3 joints each: hip abduction, hip pitch and knee. That gives 12 actuated joints.
+The robot model is generated in Python inside quadruped_env.py, so there are no mesh or XML files to manage.
+It stands on a flat plane with randomised friction and a small random push every 4 seconds, so it learns to recover.
+
+What the policy sees
+
+The gyroscope and accelerometer are mounted at the trunk centre, with Gaussian noise and a small gyro bias.
+It also gets joint angles and velocities, its previous action, and a forward-speed command.
+The last 3 frames are stacked together, because an accelerometer and gyro only give instantaneous readings.
+
+What it outputs and how it’s rewarded
+
+It outputs 12 joint-angle offsets from a standing pose, at 50 Hz.
+It’s rewarded for matching the commanded forward speed and for lifting its feet properly.
+It’s penalised for bouncing, wobbling, torque use and jerky actions.
+An episode ends if the trunk touches the ground or tilts more than 60°.
+To run it
+
+pip install -r requirements.txt
+python train.py check                 # holds the default stance, should survive all 300 steps
+python train.py train --steps 10_000_000
+python train.py eval --vx 0.5         # use mjpython on macOS
+python train.py record --vx 0.5       # saves walk.mp4
+tensorboard --logdir runs
+
+Caveats
+
+IMU only isn’t enough for walking. An IMU can’t tell the robot its joint angles, so I included joint encoders, which real robots have too. --imu_only removes them if you want to test that, but expect it to be much harder to train.
+The tuning is untested. The reward weights, motor gains (kp=30, kv=0.8) and the standing pose are sensible starting values. If check shows it collapsing or twitching in place, adjust DEFAULT_LEG_POSE, kp and kv first.
+Training time. On CPU, walking usually appears somewhere between 3 and 10 million steps, which is roughly an hour or a few hours depending on your core count. Moving to MuJoCo MJX or Isaac Lab on a GPU is the usual way to speed that up.
+
+Are you aiming to transfer this to a real robot? If so, I can add motor latency and mass randomisation, and match the leg dimensions and motor limits to your hardware.
+Since you’re going to hardware, the sim needs to model things the first version ignored. I’m reworking the environment so the same physical effects that break most sim-to-real attempts are present during training.
